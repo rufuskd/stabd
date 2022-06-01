@@ -1,7 +1,6 @@
 package filesystem
 
 import(
-  "fmt"
   "os"
   "bufio"
   "unicode"
@@ -12,7 +11,8 @@ import(
   "log"
 )
 
-type filesystem_message struct {
+type filesystem_stats struct {
+  Name    string
   Type    int64
 	Bsize   int64
 	Blocks  uint64
@@ -27,44 +27,65 @@ type filesystem_message struct {
 	Spare   [4]int64
 }
 
-//Make a statfs call, marshall relevant info into json and return it
-func Summary(w http.ResponseWriter, r *http.Request) {
+type filesystem_message struct {
+  FS  []filesystem_stats
+}
+
+//Return a list of all filesystems mounted
+func fslist() ([]string, error) {
+  var retval []string
   mounts, err := os.Open("/proc/mounts")
   if err != nil {
     log.Print("Unable to read /proc/mounts, stabd might not be running with" +
       "sufficient permissions even though it doesn't need root")
+    return nil, err
   } else {
     defer mounts.Close()
     scanner := bufio.NewScanner(mounts)
     for scanner.Scan() {
-      fmt.Println(strings.FieldsFunc(scanner.Text(),unicode.IsSpace)[0] + "kupo")
+      currentMount := strings.FieldsFunc(scanner.Text(),unicode.IsSpace)[0]
+    retval = append(retval, currentMount)
     }
-    var buf syscall.Statfs_t
-    syscall.Statfs("/dev/sda3", &buf)
-    fsinfo := filesystem_message {
-      buf.Type,
-      buf.Bsize,
-    	buf.Blocks,
-    	buf.Bfree,
-    	buf.Bavail,
-    	buf.Files,
-    	buf.Ffree,
-      buf.Fsid,
-    	buf.Namelen,
-    	buf.Frsize,
-    	buf.Flags,
-    	buf.Spare}
-    resp, _ := json.Marshal(fsinfo)
-
-    w.Write(resp)
+    return retval, nil
   }
 }
 
-func Inode(w http.ResponseWriter, r *http.Request) {
-  var buf syscall.Statfs_t
-  syscall.Statfs("/dev/sda3", &buf)
-  inodeMap := map[string]uint64{"InodesAvail" : buf.Ffree, "InodesUsed" : buf.Files}
-  resp, _ := json.Marshal(inodeMap)
+//Make a statfs call, marshall relevant info into json and return it
+func Summary(w http.ResponseWriter, r *http.Request) {
+  mounts, err := fslist()
+  if err != nil {
+    log.Print("Unable to read /proc/mounts, stabd might not be running with" +
+      "sufficient permissions even though it doesn't need root")
+    w.WriteHeader(http.StatusInternalServerError)
+    w.Write([]byte("500 - Unable to read /proc/mounts"))
+  } else {
+    var retVal filesystem_message
+    var buf syscall.Statfs_t
 
-  w.Write(resp)
+    for _, currentMount := range mounts {
+      err := syscall.Statfs(currentMount, &buf)
+      if err != nil {
+        log.Print("Unable to read filesystem stats for " + currentMount + " moving on")
+      } else {
+        fsinfo := filesystem_stats {
+          currentMount,
+          buf.Type,
+          buf.Bsize,
+        	buf.Blocks,
+        	buf.Bfree,
+        	buf.Bavail,
+        	buf.Files,
+        	buf.Ffree,
+          buf.Fsid,
+        	buf.Namelen,
+        	buf.Frsize,
+        	buf.Flags,
+        	buf.Spare}
+        retVal.FS = append(retVal.FS,fsinfo)
+      }
+    }
+
+    resp, _ := json.Marshal(retVal)
+    w.Write(resp)
+  }
 }

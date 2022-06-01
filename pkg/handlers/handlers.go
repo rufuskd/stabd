@@ -7,6 +7,4 @@ import(
 
 func RegisterHandlers() {
   http.HandleFunc("/filesystem",filesystem.Summary)
-  http.HandleFunc("/filesystem/inodes",filesystem.Inode)
-  
 }
